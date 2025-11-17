@@ -1,0 +1,135 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Simple Internet Speed Detector</title>
+<style>
+  body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;max-width:720px;margin:40px auto;color:#111}
+  h1{font-size:18px;margin-bottom:8px}
+  .card{border-radius:10px;padding:18px;background:#f7f7f9;box-shadow:0 6px 18px rgba(0,0,0,0.04)}
+  .row{display:flex;gap:12px;align-items:center;margin:12px 0}
+  button{padding:10px 14px;border-radius:8px;border:1px solid #bbb;background:#fff;cursor:pointer}
+  #meter{font-weight:700;font-size:22px}
+  progress{width:100%;height:14px}
+  small{color:#555}
+</style>
+</head>
+<body>
+  <h1>Simple Internet Speed Detector</h1>
+  <div class="card">
+    <div class="row">
+      <label for="url">Test file URL</label>
+      <input id="url" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ccc" 
+             value="https://speed.hetzner.de/10MB.bin">
+    </div>
+
+    <div class="row">
+      <button id="start">Run test</button>
+      <button id="run3">Run 3x (avg)</button>
+      <div style="margin-left:auto">
+        <span id="meter">— Mbps</span><br><small id="note">download only</small>
+      </div>
+    </div>
+
+    <div class="row">
+      <progress id="progress" value="0" max="1"></progress>
+    </div>
+
+    <div class="row">
+      <div>Last run: <span id="last">—</span></div>
+      <div style="margin-left:16px">Avg: <span id="avg">—</span></div>
+      <div style="margin-left:16px">Time: <span id="time">—</span></div>
+    </div>
+  </div>
+
+<script>
+function bytesToMbps(bytes, seconds){
+  return (bytes * 8) / seconds / 1e6; // megabits per second
+}
+
+async function measureDownload(url, onProgress=null){
+  // Use a no-cache param to avoid browser caching
+  const testUrl = url + (url.includes('?') ? '&' : '?') + 'cachebust=' + Date.now();
+  const start = performance.now();
+  const resp = await fetch(testUrl, { cache: 'no-store' });
+  if (!resp.ok) throw new Error('Fetch failed: ' + resp.status);
+  // Read body stream to measure progress precisely
+  const reader = resp.body.getReader();
+  let received = 0;
+  const chunks = [];
+  while (true){
+    const {done, value} = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (onProgress) onProgress(received);
+  }
+  const duration = (performance.now() - start) / 1000; // seconds
+  const mbps = bytesToMbps(received, Math.max(duration, 0.0001));
+  return { bytes: received, seconds: duration, mbps };
+}
+
+const startBtn = document.getElementById('start');
+const run3Btn = document.getElementById('run3');
+const progressEl = document.getElementById('progress');
+const meter = document.getElementById('meter');
+const last = document.getElementById('last');
+const avgEl = document.getElementById('avg');
+const timeEl = document.getElementById('time');
+const urlEl = document.getElementById('url');
+
+function setBusy(on){
+  startBtn.disabled = on;
+  run3Btn.disabled = on;
+}
+
+async function singleRun(url){
+  setBusy(true);
+  meter.textContent = 'testing...';
+  progressEl.value = 0;
+  try{
+    let lastReceived = 0;
+    const res = await measureDownload(url, (received)=>{
+      // approximate progress (file size unknown) — show relative growth
+      progressEl.value = Math.min(1, received / (5 * 1024 * 1024)); // heuristic scale
+      lastReceived = received;
+    });
+    meter.textContent = res.mbps.toFixed(2) + ' Mbps';
+    last.textContent = (res.mbps.toFixed(2) + ' Mbps');
+    timeEl.textContent = res.seconds.toFixed(2) + ' s / ' + res.bytes + ' bytes';
+    return res.mbps;
+  }catch(err){
+    meter.textContent = 'error';
+    last.textContent = err.message;
+    throw err;
+  }finally{
+    setBusy(false);
+    progressEl.value = 0;
+  }
+}
+
+startBtn.addEventListener('click', ()=> {
+  singleRun(urlEl.value).catch(()=>{});
+});
+
+run3Btn.addEventListener('click', async ()=>{
+  setBusy(true);
+  meter.textContent = 'running 3 tests...';
+  const results = [];
+  try{
+    for(let i=0;i<3;i++){
+      const mbps = await singleRun(urlEl.value);
+      results.push(mbps);
+    }
+    const sum = results.reduce((a,b)=>a+b,0);
+    const avg = sum / results.length;
+    avgEl.textContent = avg.toFixed(2) + ' Mbps';
+    meter.textContent = avg.toFixed(2) + ' Mbps (avg)';
+  }catch(e){
+    avgEl.textContent = '—';
+  }finally{
+    setBusy(false);
+  }
+});
+</script>
+</body>
+</html>
